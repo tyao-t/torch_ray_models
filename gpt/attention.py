@@ -1,12 +1,12 @@
 class SelfAttention_v1_v2(nn.Module):
-    def __init__(self, d_in, d_out, qkv_bias=False):
+    def __init__(self, d_in, d_out, bias=False):
         super().__init__()
         # self.W_query = nn.Parameter(torch.rand(d_in, d_out))
         # self.W_key   = nn.Parameter(torch.rand(d_in, d_out))
         # self.W_value = nn.Parameter(torch.rand(d_in, d_out))
-        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_query = nn.Linear(d_in, d_out, bias=bias)
+        self.W_key = nn.Linear(d_in, d_out, bias=bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=bias)
         
     def forward(self, x):
         keys = x @ self.W_key
@@ -23,12 +23,12 @@ class SelfAttention_v1_v2(nn.Module):
 
 class CausalAttention(nn.Module):
     def __init__(self, d_in, d_out, context_length,
-                 dropout, qkv_bias=False):
+                 dropout, bias=False):
         super().__init__()
         self.d_out = d_out
-        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.W_key   = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_query = nn.Linear(d_in, d_out, bias=bias)
+        self.W_key   = nn.Linear(d_in, d_out, bias=bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=bias)
         self.dropout = nn.Dropout(dropout)
         self.register_buffer('mask', torch.triu(torch.ones(context_length, context_length), diagonal=1)) # New
 
@@ -52,10 +52,10 @@ class CausalAttention(nn.Module):
 
 
 class MultiHeadAttentionWrapper(nn.Module):
-    def __init__(self, d_in, d_out, context_length, dropout, num_heads, qkv_bias=False):
+    def __init__(self, d_in, d_out, context_length, dropout, num_heads, bias=False):
         super().__init__()
         self.head_models = nn.ModuleList(
-            [CausalAttention(d_in, d_out, context_length, dropout, qkv_bias) 
+            [CausalAttention(d_in, d_out, context_length, dropout, bias) 
              for _ in range(num_heads)]
         )
 
@@ -63,7 +63,7 @@ class MultiHeadAttentionWrapper(nn.Module):
         return torch.cat([head_model(x) for head_model in self.head_models], dim=-1)
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_in, d_out, context_length, dropout, num_heads, qkv_bias=False):
+    def __init__(self, d_in, d_out, context_length, dropout, num_heads, bias=False):
         super().__init__()
         assert (d_out % num_heads == 0), "d_out must be a multiple of num_heads"
 
@@ -71,11 +71,12 @@ class MultiHeadAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = d_out // num_heads
 
-        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
-        self.out_proj = nn.Linear(d_out, d_out)  # Linear layer to combine head outputs
-        self.dropout = nn.Dropout(dropout)
+        self.W_query = nn.Linear(d_in, d_out, bias=bias)
+        self.W_key = nn.Linear(d_in, d_out, bias=bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=bias)
+        self.out_proj = nn.Linear(d_out, d_out, bias=bias)  # Linear layer to combine head outputs
+        self.attn_dropout = nn.Dropout(dropout)
+        self.resid_dropout = nn.Dropout(dropout)
         self.register_buffer(
             "mask",
             torch.triu(torch.ones(context_length, context_length),
@@ -104,12 +105,12 @@ class MultiHeadAttention(nn.Module):
         attn_scores.masked_fill_(mask_bool, -torch.inf)
         
         attn_weights = torch.softmax(attn_scores / keys.shape[-1]**0.5, dim=-1)
-        attn_weights = self.dropout(attn_weights)
+        attn_weights = self.attn_dropout(attn_weights)
 
         context_vec = attn_weights @ values # (b, num_heads, num_tokens, head_dim)
         context_vec = context_vec.transpose(1, 2) # (b, num_tokens, num_heads, head_dim)
         
         context_vec = context_vec.contiguous().view(b, num_tokens, self.d_out)
-        context_vec = self.out_proj(context_vec)
+        context_vec = self.resid_dropout(self.out_proj(context_vec))
         
         return context_vec

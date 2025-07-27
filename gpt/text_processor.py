@@ -4,11 +4,11 @@ from torch.utils.data import Dataset, DataLoader
 
 
 class GPTDatasetV1(Dataset):
-    def __init__(self, txt, tokenizer, max_length, stride):
+    def __init__(self, txt, tokenizer, max_length, stride, *, encode=True):
         self.input_ids = []
         self.target_ids = []
 
-        token_ids = tokenizer.encode(txt, allowed_special={"<|endoftext|>"})
+        token_ids = text_to_token_ids(txt, tokenizer, create_batch_dim=False) if encode else txt
         assert len(token_ids) > max_length
         
         for i in range(0, len(token_ids) - max_length, stride):
@@ -26,10 +26,10 @@ class GPTDatasetV1(Dataset):
 
 def create_dataloader_v1(txt, batch_size=4, max_length=256, 
                          stride=128, shuffle=True, drop_last=True,
-                         num_workers=0):
+                         num_workers=0, *, encode=True):
     tokenizer = tiktoken.get_encoding("gpt2")
 
-    dataset = GPTDatasetV1(txt, tokenizer, max_length, stride)
+    dataset = GPTDatasetV1(txt, tokenizer, max_length, stride, encode=encode)
 
     dataloader = DataLoader(
         dataset,
@@ -42,9 +42,22 @@ def create_dataloader_v1(txt, batch_size=4, max_length=256,
     return dataloader
 
 
+def text_to_token_ids(text, tokenizer, *, create_batch_dim=True):
+    encoded = tokenizer.encode(text, allowed_special={'<|endoftext|>'})
+    encoded_tensor = torch.tensor(encoded)
+    if create_batch_dim:
+        encoded_tensor = encoded_tensor.unsqueeze(0)
+    # Now encoded_tensor is (1, batch_size)
+    return encoded_tensor
+
+def token_ids_to_text(token_ids, tokenizer, *, remove_batch_dim=True):
+    # token_ids is (1, batch_size)
+    flat = token_ids.squeeze(0) if remove_batch_dim else token_ids
+    # now it is (batch_size, )
+    return tokenizer.decode(flat.tolist())
+    
 if __name__ == "__main__":
-    # print("tiktoken version:", importlib.metadata.version("tiktoken"))
-    # tiktoken version: 0.7.0
+    # print("tiktoken version:", importlib.metadata.version("tiktoken")) # Should be >= 0.7.0
 
     tokenizer = tiktoken.get_encoding("gpt2")
     text = (

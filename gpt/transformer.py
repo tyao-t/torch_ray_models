@@ -5,16 +5,6 @@ from attention import MultiHeadAttention
 gelu_exact = nn.GELU(approximate='none')  
 gelu_approx = nn.GELU(approximate='tanh') 
 
-GPT_CONFIG_124M = {
-    "vocab_size": 50257,
-    "context_length": 1024,
-    "emb_dim": 768,
-    "n_heads": 12,
-    "n_layers": 12,
-    "drop_rate": 0.1,
-    "qkv_bias": False
-}
-
 class GELU(nn.Module):
     def __init__(self):
         super().__init__()
@@ -29,9 +19,10 @@ class FeedForward(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.layers = nn.Sequential(
-            nn.Linear(cfg["emb_dim"], 4 * cfg["emb_dim"]),
+            nn.Linear(cfg["emb_dim"], 4 * cfg["emb_dim"], bias=cfg["bias"]),
             nn.GELU(),
-            nn.Linear(4 * cfg["emb_dim"], cfg["emb_dim"]),
+            nn.Linear(4 * cfg["emb_dim"], cfg["emb_dim"], bias=cfg["bias"]),
+            nn.Dropout(cfg["drop_rate"])
         )
 
     def forward(self, x):
@@ -59,60 +50,70 @@ class TransformerBlockBootstrap(nn.Module):
             context_length=cfg["context_length"],
             num_heads=cfg["n_heads"],
             dropout=cfg["drop_rate"],
-            qkv_bias=cfg["qkv_bias"]
+            bias=cfg["bias"]
         )
         self.ff = FeedForward(cfg)
-        self.norm1 = LayerNorm(cfg["emb_dim"])
-        self.norm2 = LayerNorm(cfg["emb_dim"])
+        self.norm1 = LayerNorm(cfg["emb_dim"], bias=cfg["bias"])
+        self.norm2 = LayerNorm(cfg["emb_dim"], bias=cfg["bias"])
         self.drop_shortcut = nn.Dropout(cfg["drop_rate"])
     
     def forward(self, x):
         shortcut = x
         x = self.norm1(x)
         x = self.att(x)
-        x = self.drop_shortcut(x)
+        # x = self.drop_shortcut(x)
         x = x + shortcut
         
         shortcut = x
         x = self.norm2(x)
         x = self.ff(x)
-        x = self.drop_shortcut(x)
+        # x = self.drop_shortcut(x)
         x = x + shortcut
         return x
 
 class TransformerBlock(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        self.norm1 = nn.LayerNorm(cfg["emb_dim"])
-        self.norm2 = nn.LayerNorm(cfg["emb_dim"])
+        self.norm1 = nn.LayerNorm(cfg["emb_dim"], bias=cfg["bias"])
+        self.norm2 = nn.LayerNorm(cfg["emb_dim"], bias=cfg["bias"])
         
         self.att = nn.MultiheadAttention(
             embed_dim=cfg["emb_dim"],
             num_heads=cfg["n_heads"],
             dropout=cfg["drop_rate"],
-            bias=cfg["qkv_bias"],
+            bias=cfg["bias"],
             batch_first=True
         )
-        
+
+        self.out_proj = nn.Linear(4 * cfg["emb_dim"], cfg["emb_dim"], bias=cfg["bias"])
         self.ff = nn.Sequential(
-            nn.Linear(cfg["emb_dim"], 4 * cfg["emb_dim"]),
+            nn.Linear(cfg["emb_dim"], 4 * cfg["emb_dim"], bias=cfg["bias"]),
             nn.GELU(),
-            nn.Linear(4 * cfg["emb_dim"], cfg["emb_dim"]),
+            self.out_proj,
             nn.Dropout(cfg["drop_rate"])
         )
-        self.dropout = nn.Dropout(cfg["drop_rate"])
+        self.resid_dropout = nn.Dropout(cfg["drop_rate"])
 
     def forward(self, x):
         num_tokens = x.size(1)
         mask = torch.triu(torch.ones(num_tokens, num_tokens), diagonal=1).bool()
         
-        x = x + self.dropout(self.att(
-            query=self.norm1(x),
-            key=self.norm1(x),
-            value=self.norm1(x),
-            attn_mask=mask.to(x.device)
+        x_norm = self.norm1(x)
+        # attn_out, attn_w = self.att(
+        #     query=x_norm,
+        #     key=x_norm,
+        #     value=x_norm,
+        #     is_causal = True
+        #     # attn_mask=mask.to(x.device)
+        # )
+        # x = x + self.resid_dropout(attn_out)
+        x = x + self.resid_dropout(self.att(
+            query=x_norm,
+            key=x_norm,
+            value=x_norm,
+            is_causal = True,
+            need_weights = False
         )[0])
-        
-        x = x + self.dropout(self.ff(self.norm2(x)))
+        x = x + self.ff(self.norm2(x))
 
         return x
