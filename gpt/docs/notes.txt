@@ -1,0 +1,3 @@
+self.register_buffer("cache_k", None, persistent=False) None是指没有任何内容，而persistent=False是指不会被包含在state dict里面
+Register buffer's benefit: 1. Move to device (CUDA) directly 2. Save buffer in statedict
+Difference between torch.no_grad() and model.eval(): Latter disables dropout and applies global Mean and Var to the LayerNorm nn.modules

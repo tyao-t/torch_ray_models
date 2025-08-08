@@ -1,0 +1,23 @@
+KV-Cache correct version with RoPE
+MFU and FLOPs estimation (chapter 4-5, nano)
+Saving and memory efficient weight loading, and alternative weight loading https://github.com/rasbt/LLMs-from-scratch/tree/main/ch05/02_alternative_weight_loading
+Pretraining using OpenWebText and with Gutenberg  
+
+Training:
+1. Create causal mask on the fly (Not necessary if using PyTorchSDPA)
+2. Use tensor cores  (Done)
+3. Fused AdamW optimizer Uses the fused kernels for AdamW by setting fused=True (Done)
+4. Pinned memory in the data loader (Done)
+5. Mixed precision training amp.autocast (Done)
+6. Torch.compile (Done)
+7. Padding vocab to 50304 (Done)
+8. Increasing batch size to the largest power of 2 that GPU can support (Done)
+9. DDP (Multi-GPU)
+
+Tiny
+1. RoPE (Done)
+2. RMS-Norm and MLP
+3. Qwen2 (load model)
+4. Generating response and sampling
+5. Full KV Cache - confirm modulo
+6. RAG-related 

@@ -1,7 +1,13 @@
-def calc_loss_batch(input_batch, target_batch, model, device):
+def calc_loss_batch(input_batch, target_batch, model, device, ctx):
     input_batch, target_batch = input_batch.to(device), target_batch.to(device)
-    logits = model(input_batch)
-    loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), target_batch.flatten())
+    if ctx is None:
+        logits = model(input_batch)
+        loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), target_batch.flatten())
+        return loss
+    
+    with ctx:
+        logits = model(input_batch)
+        loss = torch.nn.functional.cross_entropy(logits.flatten(0, 1), target_batch.flatten())
     return loss
 
 def calc_loss_loader(data_loader, model, device, num_batches=None):

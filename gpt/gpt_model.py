@@ -4,7 +4,7 @@ import torch.nn as nn
 import math
 
 GPT_CONFIG_124M = {
-    "vocab_size": 50257,
+    "vocab_size": 50304,
     "context_length": 1024,
     "emb_dim": 768,
     "n_heads": 12,
