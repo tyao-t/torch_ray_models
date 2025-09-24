@@ -1,3 +1,7 @@
+# Efficent attentions: https://github.com/rasbt/LLMs-from-scratch/blob/main/ch03/02_bonus_efficient-multihead-attention/mha-implementations.ipynb
+
+import torch
+import torch.nn as nn
 class SelfAttention_v1_v2(nn.Module):
     def __init__(self, d_in, d_out, bias=False):
         super().__init__()
@@ -30,6 +34,7 @@ class CausalAttention(nn.Module):
         self.W_key   = nn.Linear(d_in, d_out, bias=bias)
         self.W_value = nn.Linear(d_in, d_out, bias=bias)
         self.dropout = nn.Dropout(dropout)
+        # Auto goes to device and gets saved in state dict
         self.register_buffer('mask', torch.triu(torch.ones(context_length, context_length), diagonal=1)) # New
 
     def forward(self, x):
@@ -65,7 +70,7 @@ class MultiHeadAttentionWrapper(nn.Module):
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_in, d_out, context_length, dropout, num_heads, bias=False):
         super().__init__()
-        assert (d_out % num_heads == 0), "d_out must be a multiple of num_heads"
+        assert d_out % num_heads == 0, "d_out must be a multiple of num_heads"
 
         self.d_out = d_out
         self.num_heads = num_heads
@@ -74,43 +79,40 @@ class MultiHeadAttention(nn.Module):
         self.W_query = nn.Linear(d_in, d_out, bias=bias)
         self.W_key = nn.Linear(d_in, d_out, bias=bias)
         self.W_value = nn.Linear(d_in, d_out, bias=bias)
-        self.out_proj = nn.Linear(d_out, d_out, bias=bias)  # Linear layer to combine head outputs
+        self.out_proj = nn.Linear(d_out, d_out, bias=bias)
+        
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
+
         self.register_buffer(
             "mask",
-            torch.triu(torch.ones(context_length, context_length),
-                       diagonal=1)
+            torch.triu(torch.ones(context_length, context_length), diagonal=1)
         )
 
-    def forward(self, x):
-        b, num_tokens, d_in = x.shape
-    
-        keys = self.W_key(x) # (b, num_tokens, d_out)
-        queries = self.W_query(x)
-        values = self.W_value(x)
+    def forward(self, x_q, x_k=None, x_v=None, *, is_causal=True):
+        if x_k is None: x_k = x_q
+        if x_v is None: x_v = x_q
 
-        keys = keys.view(b, num_tokens, self.num_heads, self.head_dim) 
-        values = values.view(b, num_tokens, self.num_heads, self.head_dim)
-        queries = queries.view(b, num_tokens, self.num_heads, self.head_dim)
+        b, num_tokens_q, _ = x_q.shape
+        _, num_tokens_k, _ = x_k.shape
+        _, num_tokens_v, _ = x_v.shape
+        assert num_tokens_k == num_tokens_v, "num_tokens_k and num_tokens_v must match"
 
-        keys = keys.transpose(1, 2)
-        queries = queries.transpose(1, 2)
-        values = values.transpose(1, 2)
+        queries = self.W_query(x_q).view(b, num_tokens_q, self.num_heads, self.head_dim).transpose(1, 2)
+        keys    = self.W_key(x_k).view(b, num_tokens_k, self.num_heads, self.head_dim).transpose(1, 2)
+        values  = self.W_value(x_v).view(b, num_tokens_v, self.num_heads, self.head_dim).transpose(1, 2)
 
-        attn_scores = queries @ keys.transpose(-1, -2)
+        attn_scores = queries @ keys.transpose(-1, -2)  # (b, num_heads, num_tokens_q, num_tokens_k)
 
-        mask_bool = self.mask.bool()[:num_tokens, :num_tokens]
+        if is_causal and num_tokens_q == num_tokens_k:
+            mask_bool = self.mask.bool()[:num_tokens_q, :num_tokens_k]
+            attn_scores.masked_fill_(mask_bool, float('-inf'))
 
-        attn_scores.masked_fill_(mask_bool, -torch.inf)
-        
-        attn_weights = torch.softmax(attn_scores / keys.shape[-1]**0.5, dim=-1)
-        attn_weights = self.attn_dropout(attn_weights)
+        attn_weights = torch.softmax(attn_scores / (self.head_dim ** 0.5), dim=-1)
+        attn_weights = self.attn_dropout(attn_weights) # Still # (b, num_heads, num_tokens_q, num_tokens_k)
 
-        context_vec = attn_weights @ values # (b, num_heads, num_tokens, head_dim)
-        context_vec = context_vec.transpose(1, 2) # (b, num_tokens, num_heads, head_dim)
-        
-        context_vec = context_vec.contiguous().view(b, num_tokens, self.d_out)
+        context_vec = attn_weights @ values  # (b, num_heads, num_tokens_q, head_dim)
+        context_vec = context_vec.transpose(1, 2).contiguous().view(b, num_tokens_q, self.d_out)
         context_vec = self.resid_dropout(self.out_proj(context_vec))
-        
+
         return context_vec

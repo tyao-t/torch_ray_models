@@ -19,8 +19,8 @@ token_ids = extended_tokenizer.encode(
 )
 
 # gpt = GPTModel(...)
-gpt = None
-gpt.eval()
+# gpt = None
+# gpt.eval()
 
 gpt.tok_emb # Embedding(50257, 768)
 

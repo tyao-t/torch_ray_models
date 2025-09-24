@@ -5,6 +5,20 @@ from text_processor import create_dataloader
 from gpt_model import GPTModel
 from transformers.trainer_utils import find_executable_batch_size
 
+# Adam: 自适应学习率 指数滑动平均 一阶矩 二阶矩 偏差修正 β1/β2 ε数值稳定 逐元素预条件化 梯度标准差归一化 动量/惯性 噪声平滑 各向异性缩放 非凸优化 尺度不变性 收敛稳健性。Adam通过对梯度做指数滑动平均得到一阶矩和二阶矩，经偏差修正后按逐元素预条件化把平均梯度除以其“标准差”，在非凸、各向异性地形里以自适应学习率平滑噪声、提升数值稳定与收敛稳健性。
+
+# AdamW: AdamW 解耦weight decay 与L2正则区别 非通过梯度项直接衰减w 正则强度λ 不对Norm/偏置/Embedding衰减 泛化改进 大模型默认 与warmup/decay协同 学习率敏感性降低 动量与衰减解耦 参数组 可重复性 全参/指令微调稳定 数值稳定性。AdamW将权重衰减从梯度更新中解耦，在不扭曲动量与自适应缩放的前提下对参数直接收缩，配合warmup/decay在大模型预训练与微调中带来更稳的优化与更好的泛化。
+
+# Learning Rate Warmup: 预热阶段 小学习率起步 线性/多项式上升 动量估计冷启动 二阶矩稳定期 混合精度动态范围 安全区间 防止早期发散/NaN 大batch线性缩放规则 早期高噪声平滑 深残差/注意力放大效应 峰值LR过渡 burn-in LoRA短暖启动 训练曲线平滑。Warmup用小LR逐步升到峰值，让动量与二阶矩在混合精度和大batch情况下先稳定下来，缓解深网络早期的噪声与放大效应，避免一上来就数值发散。
+
+# Cosine Decay: 余弦退火 学习率调度 端点导数为0 先快后慢 探索→利用过渡 模拟退火“降温” 抗震荡 泛化提升 lr_min尾巴 单阶段训练收敛 避免step跳变 与warmup拼接 进度感知t/T 平坦极小值偏好 可继续训练/重启易衔接。Cosine decay在warmup之后让LR随进度先快后慢、平滑衰减到lr_min，起到“降温”与抗震荡作用，常带来更好的泛化并避免台阶式调度的数值冲击。
+
+# Gradient Clipping: 全局范数裁剪 L2范数 阈值max_norm 统一比例缩放 防偶发梯度爆炸 长序列注意力极值 AMP先unscale再clip 梯度累积前裁一次 分布式全局归约 触发率监控 阈值调参 与LR/序列长度权衡 “保险丝”机制 直方图/日志监测 数值稳定提升。Clipping计算全局L2范数并在超过阈值时统一缩放梯度长度，像保险丝一样拦截偶发尖峰（长序列/混合精度常见），需在AMP下先反缩放并监控触发率以调好阈值与学习率。
+
+# 小结：Warmup负责“安全起步”，cosine decay负责“平滑收尾”，Adam/AdamW用一、二阶矩做逐元素自适应步长与动量平滑（AdamW还解耦衰减以利泛化），clipping则在每一步提供“尖峰保护”，共同在可能高曲率与高噪声的非凸地形上实现稳定、可控、泛化更好的训练。
+# 二阶矩估计（second moment） 被称为自适应学习率（adaptive learning rate），Root Mean Square Propagation”
+
+# Hyper Param tuning
 HPARAM_GRID = {
     "batch_size": [2, 4, 8, 16],
     "drop_rate": [0.0, 0.1, 0.2],

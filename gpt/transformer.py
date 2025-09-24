@@ -7,9 +7,9 @@ from extensions.efficient_attention import MHAFlashPyTorchSDP
 class FeedForward(nn.Module):
     def __init__(self, emb_dim, *, dropout, bias):
         super().__init__()
-        self.out_proj = nn.Linear(4 * emb_dim, emb_dim, bias=config.bias)
+        self.out_proj = nn.Linear(4 * emb_dim, emb_dim, bias=bias)
         self.layers = nn.Sequential(
-            nn.Linear(emb_dim, 4 * emb_dim, bias=config.bias),
+            nn.Linear(emb_dim, 4 * emb_dim, bias=bias),
             nn.GELU(approximate="none"), # nn.GELU(approximate="tanh")
             self.out_proj,
             nn.Dropout(dropout)
@@ -28,9 +28,17 @@ class TransformerBlock(nn.Module):
         self.ff = FeedForward(cfg["emb_dim"], dropout=cfg["drop_rate"], bias=cfg["bias"])
 
     def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
+        x_normalized = self.ln_1(x)
+        x = x + self.attn(x_normalized, x_normalized, x_normalized)
         x = x + self.ff(self.ln_2(x))
         return x
+
+# 优点
+# 计算效率更高：Layer Norm 需要计算均值和标准差，而 RMS Norm 只需要计算均方根，减少了计算量。例如在 GPT-2 模型中，使用 RMS Norm 相比 Layer Norm 可减少约 18% 的训练时间。
+# 数值稳定性更好：RMS Norm 不进行均值归一化，避免了 Layer Norm 中可能出现的均值计算精度问题，以及方差趋近于零导致的数值不稳定问题。其分母始终为正，不会出现 Layer Norm 中方差可能为零的情况，在低精度训练（如 FP16、BF16）场景下优势明显。
+# 参数效率高：RMS Norm 仅需学习一个缩放参数 γ，而 Layer Norm 需要学习 γ 和 β 两个参数，参数量减少一半，这使得 RMS Norm 在模型训练和推理过程中更加高效，减少了参数更新和存储的开销。
+# 更适合长序列模型：RMS Norm 对批次大小和输入分布的变化更加鲁棒，无需依赖批量统计量，特别适用于长序列模型，如 Transformer 架构。
+# 缺点：RMS Norm 不去均值，在某些对均值信息敏感的任务中可能表现不如 Layer Norm，例如图像数据任务中，均值归 0 能稳定训练，而 RMS Norm 不能，可能导致训练不稳定。
 
 class RMSNorm(nn.Module):
     def __init__(self, emb_dim, eps=1e-5):
@@ -73,7 +81,7 @@ class RMSNormQwen3(nn.Module):
 
         return norm_x.to(input_dtype)
 
-class FeedForwardLlamaQwen(nn.Module):
+class FeedForwardLlamaQwenMoreEfficient(nn.Module):
     def __init__(self, embed_dim: int, hidden_dim: int):
         super().__init__()
         self.input_proj  = nn.Linear(embed_dim, hidden_dim * 2)
@@ -82,5 +90,18 @@ class FeedForwardLlamaQwen(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         candidate, gate = self.input_proj(x).chunk(2, dim=-1)
-        gated = self.act(candidate) * gate # SwiGLU
+        gated = self.act(gate) * candidate # SwiGLU
         return self.output_proj(gated)
+
+class FeedForwardLlamaQwen(nn.Module):
+    def __init__(self, embed_dim: int, hidden_dim: int):
+        super().__init__()
+        self.candidate_proj = nn.Linear(embed_dim, hidden_dim)  # up_proj
+        self.gate_proj = nn.Linear(embed_dim, hidden_dim)       # gate_proj
+        self.output_proj = nn.Linear(hidden_dim, embed_dim)     # down_proj
+        self.swish = nn.SiLU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        up = self.candidate_proj(x) # Candidate
+        gate = self.swish(self.gate_proj(x))   # ← 激活在 gate 上
+        return self.output_proj(gate * up)
