@@ -1,4 +1,7 @@
 import torch.nn as nn
+import torch
+
+llama_3_theta_base = 500_000
 class GroupedQueryAttention(nn.Module):
     def __init__(
             self, d_in, d_out, num_heads,
@@ -152,6 +155,8 @@ class Llama3Model(nn.Module):
         
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
+        self.ctx_len = cfg["max_context_length"]
+        self.register_buffer("mask", torch.triu(torch.ones(self.ctx_len, self.ctx_len, dtype=torch.bool), diagonal=1))
         ##############################################
 
         self.cfg = cfg
@@ -162,9 +167,9 @@ class Llama3Model(nn.Module):
 
         #################### NEW #####################
         num_tokens = x.shape[1]
-        mask = torch.triu(torch.ones(num_tokens, num_tokens, device=x.device, dtype=torch.bool), diagonal=1)
+        assert x.shape[1] <= self.ctx_len
         ##############################################
-        
+        mask = self.mask[num_tokens, num_tokens]
         for block in self.trf_blocks:
             x = block(x, mask, self.cos, self.sin)
         x = self.final_norm(x)
